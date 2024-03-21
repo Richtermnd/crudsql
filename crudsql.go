@@ -11,11 +11,11 @@ import (
 var (
 	// Question is a PlaceholderFormat instance that leaves placeholders as
 	// question marks.
-	Question = sq.Question
+	Question = sq.Question // sqlite
 
 	// Dollar is a PlaceholderFormat instance that replaces placeholders with
 	// dollar-prefixed positional placeholders (e.g. $1, $2, $3).
-	Dollar = sq.Dollar
+	Dollar = sq.Dollar // Postgres
 
 	// Colon is a PlaceholderFormat instance that replaces placeholders with
 	// colon-prefixed positional placeholders (e.g. :1, :2, :3).
@@ -40,20 +40,20 @@ type SQLRecord interface {
 	PrimaryKey() (key string, value interface{})
 }
 
-type Options struct {
-	Placehodelder sq.PlaceholderFormat
-}
-
 type CRUD[T SQLRecord] struct {
 	db *sqlx.DB
+	sq sq.StatementBuilderType
 }
 
-func New[T SQLRecord](db *sqlx.DB) *CRUD[T] {
-	return &CRUD[T]{db: db}
+func New[T SQLRecord](db *sqlx.DB, placeholder sq.PlaceholderFormat) *CRUD[T] {
+	return &CRUD[T]{
+		db: db,
+		sq: sq.StatementBuilder.PlaceholderFormat(placeholder),
+	}
 }
 
 func (c *CRUD[T]) Create(ctx context.Context, item T) error {
-	stmt, args, err := sq.
+	stmt, args, err := c.sq.
 		Insert(item.Table()).
 		Columns(item.Columns()...).
 		Values(item.Map()).
@@ -65,9 +65,9 @@ func (c *CRUD[T]) Create(ctx context.Context, item T) error {
 	return err
 }
 
-func (c *CRUD[T]) Read(ctx context.Context, pk interface{}) (item T, err error) {
+func (c *CRUD[T]) Get(ctx context.Context, pk interface{}) (item T, err error) {
 	pkColumn, _ := item.PrimaryKey()
-	stmt, args, err := sq.
+	stmt, args, err := c.sq.
 		Select("*").
 		From(item.Table()).
 		Where(sq.Eq{pkColumn: pk}).
@@ -79,9 +79,9 @@ func (c *CRUD[T]) Read(ctx context.Context, pk interface{}) (item T, err error) 
 	return
 }
 
-func (c *CRUD[T]) ReadAll(ctx context.Context) (items []T, err error) {
+func (c *CRUD[T]) GetAll(ctx context.Context) (items []T, err error) {
 	var temp T
-	stmt, args, err := sq.Select("*").From(temp.Table()).ToSql()
+	stmt, args, err := c.sq.Select("*").From(temp.Table()).ToSql()
 	if err != nil {
 		return
 	}
@@ -94,7 +94,7 @@ func (c *CRUD[T]) Update(ctx context.Context, pk interface{}, item T) error {
 	recordMap := item.Map()
 	delete(recordMap, pkColumn)
 
-	stmt, args, err := sq.
+	stmt, args, err := c.sq.
 		Update(item.Table()).
 		SetMap(recordMap).
 		Where(sq.Eq{pkColumn: pk}).
@@ -109,7 +109,7 @@ func (c *CRUD[T]) Update(ctx context.Context, pk interface{}, item T) error {
 func (c *CRUD[T]) Delete(ctx context.Context, pk interface{}) error {
 	var temp T
 	pkColumn, _ := temp.PrimaryKey()
-	stmt, args, err := sq.
+	stmt, args, err := c.sq.
 		Delete(temp.Table()).
 		Where(sq.Eq{pkColumn: pk}).
 		ToSql()

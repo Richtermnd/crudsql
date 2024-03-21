@@ -2,7 +2,7 @@ package crudsql_test
 
 import (
 	"context"
-	"fmt"
+	"os"
 	"testing"
 
 	"github.com/Richtermnd/crudsql"
@@ -10,29 +10,34 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var db *sqlx.DB
-var records map[int64]Person
+func suite(testName string) (crud *crudsql.CRUD[Person], records map[int64]Person, cleanup func()) {
+	db, _ := sqlx.Connect("sqlite3", testName)
+	cleanup = func() {
+		db.Close()
+		os.Remove(testName)
+	}
 
-func init() {
-	db, _ = sqlx.Connect("sqlite3", "test.db")
-
-	db.MustExec("DROP TABLE IF EXISTS persons")
-	db.MustExec("CREATE TABLE IF NOT EXISTS persons (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)")
-	db.MustExec("INSERT INTO persons (name) VALUES ('Joe')")
-	db.MustExec("INSERT INTO persons (name) VALUES ('Mary')")
-	db.MustExec("INSERT INTO persons (name) VALUES ('John')")
+	names := [5]string{
+		"Joe",
+		"Mary",
+		"John",
+		"Jane",
+		"Bob",
+	}
 
 	records = make(map[int64]Person)
-	var id int64
-	var name string
-	rows, err := db.Query("SELECT id, name FROM persons")
-	if err != nil {
-		fmt.Printf("err: %v\n", err)
+	db.MustExec("DROP TABLE IF EXISTS persons")
+	db.MustExec("CREATE TABLE IF NOT EXISTS persons (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)")
+	for _, name := range names {
+		res := db.MustExec("INSERT INTO persons (name) VALUES (?)", name)
+		id, _ := res.LastInsertId()
+		records[id] = Person{
+			ID:   id,
+			Name: name,
+		}
 	}
-	for rows.Next() {
-		rows.Scan(&id, &name)
-		records[id] = Person{ID: id, Name: name}
-	}
+
+	return crudsql.New[Person](db, crudsql.Question), records, cleanup
 }
 
 // SQLRecord example
@@ -61,11 +66,13 @@ func (p Person) PrimaryKey() (key string, value interface{}) {
 }
 
 func TestRead(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	crud := crudsql.New[Person](db)
+	crud, records, cleanup := suite(t.Name())
+	t.Cleanup(cleanup)
 
 	for id, person := range records {
-		item, err := crud.Read(ctx, id)
+		item, err := crud.Get(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,9 +83,12 @@ func TestRead(t *testing.T) {
 }
 
 func TestReadAll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	crud := crudsql.New[Person](db)
-	items, err := crud.ReadAll(ctx)
+	crud, records, cleanup := suite(t.Name())
+	t.Cleanup(cleanup)
+
+	items, err := crud.GetAll(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,33 +98,34 @@ func TestReadAll(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	crud := crudsql.New[Person](db)
+	crud, records, cleanup := suite(t.Name())
+	t.Cleanup(cleanup)
 
-	// insert new record and delete it
-	res, err := db.Exec("Insert INTO persons (name) VALUES ('foo')")
+	id := records[1].ID
+	err := crud.Delete(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = crud.Delete(ctx, id)
-	if err != nil {
-		t.Fatal(err)
+
+	_, err = crud.Get(ctx, id)
+	if err == nil {
+		t.Fatal("Expected error")
 	}
 }
 
 func TestUpdate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	crud := crudsql.New[Person](db)
-	t.Log(crud.Read(ctx, 1))
+	crud, _, cleanup := suite(t.Name())
+	t.Cleanup(cleanup)
+
 	err := crud.Update(ctx, 1, Person{Name: "foo"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := crud.Read(ctx, 1)
+	item, err := crud.Get(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
