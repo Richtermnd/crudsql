@@ -2,6 +2,7 @@ package crudsql_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 
@@ -10,12 +11,12 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func suite(testName string) (crud *crudsql.CRUD[Person], records map[int64]Person, cleanup func()) {
-	db, _ := sqlx.Connect("sqlite3", testName)
-	cleanup = func() {
+func suite(t *testing.T) (db *sqlx.DB, crud *crudsql.CRUD[Person], records map[int64]Person) {
+	db, _ = sqlx.Connect("sqlite3", t.Name())
+	t.Cleanup(func() {
 		db.Close()
-		os.Remove(testName)
-	}
+		os.Remove(t.Name())
+	})
 
 	names := [5]string{
 		"Joe",
@@ -37,7 +38,7 @@ func suite(testName string) (crud *crudsql.CRUD[Person], records map[int64]Perso
 		}
 	}
 
-	return crudsql.New[Person](db, crudsql.Question), records, cleanup
+	return db, crudsql.New[Person](db, crudsql.Question), records
 }
 
 // SQLRecord example
@@ -68,8 +69,7 @@ func (p Person) PrimaryKey() (key string, value interface{}) {
 func TestRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	crud, records, cleanup := suite(t.Name())
-	t.Cleanup(cleanup)
+	_, crud, records := suite(t)
 
 	for id, person := range records {
 		item, err := crud.Get(ctx, id)
@@ -82,11 +82,25 @@ func TestRead(t *testing.T) {
 	}
 }
 
+func TestReadNotEixistent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, crud, _ := suite(t)
+
+	_, err := crud.Get(ctx, 123456789)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	if err != sql.ErrNoRows {
+		t.Fatalf("Expected %v, got %v", sql.ErrNoRows, err)
+	}
+}
+
 func TestReadAll(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	crud, records, cleanup := suite(t.Name())
-	t.Cleanup(cleanup)
+	_, crud, records := suite(t)
 
 	items, err := crud.GetAll(ctx)
 	if err != nil {
@@ -100,8 +114,7 @@ func TestReadAll(t *testing.T) {
 func TestDelete(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	crud, records, cleanup := suite(t.Name())
-	t.Cleanup(cleanup)
+	db, crud, records := suite(t)
 
 	id := records[1].ID
 	err := crud.Delete(ctx, id)
@@ -109,23 +122,28 @@ func TestDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = crud.Get(ctx, id)
+	row := db.QueryRow("SELECT * FROM persons WHERE id = ?", id)
+	p := Person{}
+	err = row.Scan(&p.ID, &p.Name)
 	if err == nil {
-		t.Fatal("Expected error")
+		t.Fatal("Item not deleted")
+	}
+	if err != sql.ErrNoRows {
+		t.Fatalf("Expected %v, got %v", sql.ErrNoRows, err)
 	}
 }
 
 func TestUpdate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	crud, _, cleanup := suite(t.Name())
-	t.Cleanup(cleanup)
+	db, crud, _ := suite(t)
 
 	err := crud.Update(ctx, 1, Person{Name: "foo"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := crud.Get(ctx, 1)
+	var item Person
+	db.Get(&item, "SELECT * FROM persons WHERE id = 1")
 	if err != nil {
 		t.Fatal(err)
 	}

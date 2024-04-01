@@ -53,14 +53,25 @@ func New[T SQLRecord](db *sqlx.DB, placeholder sq.PlaceholderFormat) *CRUD[T] {
 }
 
 func (c *CRUD[T]) Create(ctx context.Context, item T) error {
+	m := item.Map()
+	cols := item.Columns()
+
+	// get model values
+	values := make([]interface{}, len(m))
+	for _, v := range cols {
+		values = append(values, m[v])
+	}
+
+	// build query
 	stmt, args, err := c.sq.
 		Insert(item.Table()).
 		Columns(item.Columns()...).
-		Values(item.Map()).
+		Values(values...).
 		ToSql()
 	if err != nil {
 		return err
 	}
+	// exec query
 	_, err = c.db.ExecContext(ctx, stmt, args...)
 	return err
 }
